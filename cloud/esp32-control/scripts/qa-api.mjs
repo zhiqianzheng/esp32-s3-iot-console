@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const qa=Object.fromEntries(fs.readFileSync('.dev.vars','utf8').trim().split('\n').map(l=>{const i=l.indexOf('=');return [l.slice(0,i),l.slice(i+1).replace(/^"|"$/g,'')]}));
+const origin='http://127.0.0.1:4173';let cookie='';
+async function call(path,body,headers={}){await new Promise(r=>setTimeout(r,180));const r=await fetch(origin+'/api/'+path,{method:body===undefined?'GET':'POST',headers:{Connection:'close',...(cookie?{Cookie:cookie}:{}),...(body!==undefined?{'Content-Type':'application/json',Origin:origin}:{}),...headers},body:body===undefined?undefined:JSON.stringify(body)});let data;const text=await r.text();try{data=JSON.parse(text);}catch{data={raw:text}}if(r.status===503)console.error('503 response',path,JSON.stringify(data));return {r,data};}
+assert.equal((await call('snapshot')).r.status,401);
+assert.equal((await call('login',{username:'root',password:'wrong'})).r.status,401);
+const login=await call('login',{username:qa.ADMIN_USERNAME,password:qa.ADMIN_PASSWORD});assert.equal(login.r.status,200);cookie=login.r.headers.get('set-cookie').split(';')[0];
+assert.equal((await call('session')).data.authenticated,true);
+assert.equal((await call('command',{kind:'servo_stop'},{Origin:'https://evil.test'})).r.status,403);
+assert.equal((await call('device/sync',{}, {Authorization:'Bearer invalid'})).r.status,401);
+const state={color:{type:'color',status:'ok',r:100,g:200,b:50,c:500},dht:{type:'dht',status:'ok',temperature:23.5,humidity:51}};
+const payload={device_id:'esp32-demo',boot_id:'isolated-local-qa',uptime:1000,states:state,acks:[]};
+const auth={Authorization:'Bearer '+qa.DEVICE_KEY};
+assert.equal((await call('device/sync',payload,auth)).r.status,200);
+const invalid=await call('command',{kind:'servo',mode:'single',enabled:true,target:999});assert.equal(invalid.r.status,400);
+const servo={kind:'servo',mode:'single',enabled:true,target:95,low:60,high:120,period:4,speed:60,pwm_frequency:50,hold:true};
+const command=await call('command',servo);assert.equal(command.r.status,200);
+const sync=await call('device/sync',payload,auth);assert.equal(sync.r.status,200);assert.ok(sync.data.commands.some(c=>c.id===command.data.id));assert.equal(sync.data.servo_keepalive,true);
+payload.acks=[{id:command.data.id,ok:true,state:{angle:95,enabled:true}}];await call('device/sync',payload,auth);
+const snap=await call('snapshot');assert.equal(snap.data.commands.find(c=>c.id===command.data.id).status,'ack');assert.ok(snap.data.history.length);
+await call('command',{kind:'servo_stop'});const stop=await call('device/sync',payload,auth);assert.equal(stop.data.commands[0].kind,'servo_stop');assert.equal(stop.data.servo_keepalive,false);
+payload.boot_id='new-boot-local-qa';payload.acks=[];await call('device/sync',payload,auth);const fresh=await call('device/sync',payload,auth);assert.equal(fresh.data.commands.length,0);
+await call('logout',{});assert.equal((await call('snapshot')).r.status,401);
+console.log('API QA passed: login, unauthorized access, CSRF, device authentication, parameter validation, command/ack, stop priority, boot isolation and logout.');

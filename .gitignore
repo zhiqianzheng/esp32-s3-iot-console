@@ -1,0 +1,16 @@
+sdk/
+tools/espressif/
+projects/*/build/
+projects/*/sdkconfig.old
+logs/
+
+host/sensor-dashboard/.venv/
+**/__pycache__/
+
+projects/*/managed_components/
+
+.env*
+.dev.vars*
+*.pem
+projects/*/sdkconfig
+cloud/esp32-control/.sites-runtime/
